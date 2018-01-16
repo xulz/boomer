@@ -7,6 +7,7 @@ import (
 	"runtime/debug"
 	"sync/atomic"
 	"time"
+	"github.com/petermattis/goid"
 )
 
 const (
@@ -25,7 +26,7 @@ const (
 // goroutines to run Task.Fn .
 type Task struct {
 	Weight int
-	Fn     func()
+	Fn     func(int)
 	Name   string
 }
 
@@ -39,7 +40,7 @@ type runner struct {
 	nodeID      string
 }
 
-func (r *runner) safeRun(fn func()) {
+func (r *runner) safeRun(fn func(int),id int) {
 	defer func() {
 		// don't panic
 		err := recover()
@@ -48,8 +49,18 @@ func (r *runner) safeRun(fn func()) {
 			Events.Publish("request_failure", "unknown", "panic", 0.0, fmt.Sprintf("%v", err))
 		}
 	}()
-	fn()
+	fn(id)
 }
+
+func indexOf(value int64, data []int64)(int){
+	for i,v := range data{
+		if value == v{
+			return i
+		}
+	}
+	return -1
+}
+
 
 func (r *runner) spawnGoRoutines(spawnCount int, quit chan bool) {
 
@@ -68,12 +79,15 @@ func (r *runner) spawnGoRoutines(spawnCount int, quit chan bool) {
 		if weightSum == 0 {
 			amount = int(float64(spawnCount) / float64(len(r.tasks)))
 		}
-
+		var userList []int64
 		for i := 1; i <= amount; i++ {
 			if i%r.hatchRate == 0 {
 				time.Sleep(1 * time.Second)
 			}
-			go func(fn func()) {
+			go func(fn func(int)) {
+				gid := goid.Get()
+				userList = append(userList,gid)
+				userId := indexOf(gid,userList)
 				for {
 					select {
 					case <-quit:
@@ -85,10 +99,10 @@ func (r *runner) spawnGoRoutines(spawnCount int, quit chan bool) {
 								// max RPS is reached, wait until next second
 								<-maxRPSControlChannel
 							} else {
-								r.safeRun(fn)
+								r.safeRun(fn,userId)
 							}
 						} else {
-							r.safeRun(fn)
+							r.safeRun(fn,userId)
 						}
 					}
 				}

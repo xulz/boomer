@@ -31,7 +31,7 @@ func Run(tasks ...*Task) {
 				for _, name := range taskNames {
 					if name == task.Name {
 						log.Println("Running " + task.Name)
-						task.Fn()
+						task.Fn(1)
 					}
 				}
 			}
