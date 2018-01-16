@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"github.com/petermattis/goid"
 )
 
 const (
@@ -50,7 +51,7 @@ type runner struct {
 
 // safeRun runs fn and recovers from unexpected panics.
 // it prevents panics from Task.Fn crashing boomer.
-func (r *runner) safeRun(fn func()) {
+func (r *runner) safeRun(fn func(int), id int) {
 	defer func() {
 		// don't panic
 		err := recover()
@@ -62,7 +63,16 @@ func (r *runner) safeRun(fn func()) {
 			os.Stderr.Write(stackTrace)
 		}
 	}()
-	fn()
+	fn(id)
+}
+
+func indexOf(value int64, data []int64)(int){
+	for i,v := range data{
+		if value == v{
+			return i
+		}
+	}
+	return -1
 }
 
 func (r *runner) addOutput(o Output) {
@@ -125,7 +135,7 @@ func (r *runner) spawnWorkers(spawnCount int, quit chan bool, spawnCompleteFunc 
 			spawnCompleteFunc()
 		}
 	}()
-
+	var userList []int64
 	for i := 1; i <= spawnCount; i++ {
 		sleepTime := time.Duration(1000000/r.spawnRate) * time.Microsecond
 		time.Sleep(sleepTime)
@@ -136,7 +146,10 @@ func (r *runner) spawnWorkers(spawnCount int, quit chan bool, spawnCompleteFunc 
 			return
 		default:
 			atomic.AddInt32(&r.numClients, 1)
-			go func() {
+			go func(fn func(int)) {
+				gid := goid.Get()
+				userList = append(userList,gid)
+				userId := indexOf(gid,userList)
 				for {
 					select {
 					case <-quit:
@@ -146,11 +159,11 @@ func (r *runner) spawnWorkers(spawnCount int, quit chan bool, spawnCompleteFunc 
 							blocked := r.rateLimiter.Acquire()
 							if !blocked {
 								task := r.getTask()
-								r.safeRun(task.Fn)
+								r.safeRun(task.Fn,userId)
 							}
 						} else {
 							task := r.getTask()
-							r.safeRun(task.Fn)
+							r.safeRun(task.Fn,userId)
 						}
 					}
 				}
