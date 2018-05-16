@@ -32,7 +32,7 @@ type Task struct {
 
 type runner struct {
 	tasks       []*Task
-	numClients  int
+	numClients  int32
 	hatchRate   int
 	stopChannel chan bool
 	state       string
@@ -81,32 +81,40 @@ func (r *runner) spawnGoRoutines(spawnCount int, quit chan bool) {
 		}
 		var userList []int64
 		for i := 1; i <= amount; i++ {
-			if i%r.hatchRate == 0 {
-				time.Sleep(1 * time.Second)
-			}
-			go func(fn func(int)) {
-				gid := goid.Get()
-				userList = append(userList,gid)
-				userId := indexOf(gid,userList)
-				for {
-					select {
-					case <-quit:
-						return
-					default:
-						if maxRPSEnabled {
-							token := atomic.AddInt64(&maxRPSThreshold, -1)
-							if token < 0 {
-								// max RPS is reached, wait until next second
-								<-maxRPSControlChannel
+			select {
+			case <-quit:
+				// quit hatching goroutine
+				return
+			default:
+				if i%r.hatchRate == 0 {
+					time.Sleep(1 * time.Second)
+				}
+				atomic.AddInt32(&r.numClients, 1)
+				go func(fn func(int)) {
+					gid := goid.Get()
+					userList = append(userList,gid)
+					userId := indexOf(gid,userList)
+					for {
+						select {
+						case <-quit:
+							return
+						default:
+							if maxRPSEnabled {
+								token := atomic.AddInt64(&maxRPSThreshold, -1)
+								if token < 0 {
+									// max RPS is reached, wait until next second
+									<-maxRPSControlChannel
+								} else {
+									r.safeRun(fn,userId)
+								}
 							} else {
 								r.safeRun(fn,userId)
 							}
-						} else {
-							r.safeRun(fn,userId)
 						}
 					}
-				}
-			}(task.Fn)
+				}(task.Fn)
+			}
+
 		}
 
 	}
@@ -122,7 +130,7 @@ func (r *runner) startHatching(spawnCount int, hatchRate int) {
 		r.stopChannel = make(chan bool)
 	}
 
-	if r.state == stateRunning {
+	if r.state == stateRunning || r.state == stateHatching {
 		// stop previous goroutines without blocking
 		// those goroutines will exit when r.safeRun returns
 		close(r.stopChannel)
@@ -132,9 +140,8 @@ func (r *runner) startHatching(spawnCount int, hatchRate int) {
 	r.state = stateHatching
 
 	r.hatchRate = hatchRate
-	r.numClients = spawnCount
-	r.spawnGoRoutines(r.numClients, r.stopChannel)
-
+	r.numClients = 0
+	go r.spawnGoRoutines(spawnCount, r.stopChannel)
 }
 
 func (r *runner) hatchComplete() {
@@ -152,7 +159,7 @@ func (r *runner) onQuiting() {
 
 func (r *runner) stop() {
 
-	if r.state == stateRunning {
+	if r.state == stateRunning || r.state == stateHatching {
 		close(r.stopChannel)
 		r.state = stateStopped
 		log.Println("Recv stop message from master, all the goroutines are stopped")
